@@ -152,10 +152,6 @@ if generate:
     }
 
     json_data = json.dumps(data, indent=2)
-    st.markdown("<div class='result-section'>", unsafe_allow_html=True)
-    st.info("📦 Input JSON Generated:")
-    st.code(json_data, language="json")
-    st.markdown("</div>", unsafe_allow_html=True)
 
 
     PROMPT_TEMPLATE = f"""
@@ -387,7 +383,7 @@ Take a deep breath and work on this problem step-by-step.
     st.markdown("<div class='result-section'>", unsafe_allow_html=True)
     st.success("✅ Estimation Generated Successfully!")
 
-    # Robust JSON extraction (handles code fences and surrounding text)
+    # Robust JSON extraction
     if "Full JSON Object" in response:
         parts = response.split("Full JSON Object", 1)
         markdown_part = parts[0].strip()
@@ -411,7 +407,6 @@ Take a deep breath and work on this problem step-by-step.
     st.subheader("📊 Structured Estimation Tables")
 
     try:
-        # Clean common wrappers
         json_cleaned = json_part.strip().replace("```json", "").replace("```", "").strip()
         if not (json_cleaned.startswith("{") and json_cleaned.endswith("}")):
             s = json_cleaned.find("{")
@@ -421,21 +416,18 @@ Take a deep breath and work on this problem step-by-step.
 
         parsed_json = json.loads(json_cleaned)
 
-        # Ensure top-level keys exist (warn but continue if not)
         expected = {"features", "resources", "tech", "budget"}
         if not expected.issubset(parsed_json.keys()):
             st.warning("⚠️ Parsed JSON missing some expected top-level keys (features/resources/tech/budget). Rendering available keys.")
 
-        # Hourly rates (from your latest prompt)
         RATES = {"fullstack": 25, "ai": 30, "ui_ux": 30, "pm": 40, "qa": 20}
 
-        # ---- FEATURES TABLE (only total cost per feature) ----
+        # ---- FEATURES TABLE ----
         st.markdown("<div class='section-title'>🏗️ Features Overview</div>", unsafe_allow_html=True)
         features = parsed_json.get("features", [])
         if features and isinstance(features, list):
             feature_rows = []
             for f in features:
-                # Collect hours for defined roles; return "N/A" if missing
                 def parse_hours(v):
                     try:
                         if isinstance(v, (int, float)):
@@ -449,31 +441,18 @@ Take a deep breath and work on this problem step-by-step.
                         return None
                     return None
 
-                # Map resource list to dict by role
                 resources_list = f.get("resources", [])
-                res_map = {}
-                for r in resources_list:
-                    role_key = r.get("role", "").lower()
-                    res_map[role_key] = parse_hours(r.get("hours", "N/A"))
+                res_map = {r.get("role", "").lower(): parse_hours(r.get("hours", "N/A")) for r in resources_list}
 
-                # Extract numeric hours or treat missing as None
                 fullstack_h = res_map.get("fullstack")
                 ai_h = res_map.get("ai")
                 ui_ux_h = res_map.get("ui_ux")
                 pm_h = res_map.get("pm")
                 qa_h = res_map.get("qa")
 
-                # Sum numeric hours for duration_hours
-                duration_hours = 0
-                any_num = False
-                for hh in (fullstack_h, ai_h, ui_ux_h, pm_h, qa_h):
-                    if isinstance(hh, (int, float)):
-                        duration_hours += hh
-                        any_num = True
-                if not any_num:
-                    duration_hours = 0
+                duration_hours = sum(h for h in [fullstack_h, ai_h, ui_ux_h, pm_h, qa_h] if isinstance(h, (int, float)))
 
-                # Compute total feature cost using rates; missing roles -> cost 0
+                # Compute total cost using hourly rates
                 def compute_cost(hours, rate):
                     return round(hours * rate, 2) if isinstance(hours, (int, float)) else 0.0
 
@@ -486,18 +465,25 @@ Take a deep breath and work on this problem step-by-step.
                 )
                 total_feature_cost = round(total_feature_cost, 2)
 
-                # Use budget's per_feature cost if present and numeric (prefer computed otherwise)
-                # (This is optional: we'll display computed value)
                 feature_rows.append({
                     "feature_name": f.get("feature_name", ""),
                     "description": (f.get("description", "")[:250] + ("..." if len(f.get("description",""))>250 else "")),
                     "phase": f.get("timeline", {}).get("phase", ""),
                     "duration_hours": duration_hours,
+                    "fullstack_hours": fullstack_h if fullstack_h is not None else "N/A",
+                    "ai_hours": ai_h if ai_h is not None else "N/A",
+                    "ui_ux_hours": ui_ux_h if ui_ux_h is not None else "N/A",
+                    "pm_hours": pm_h if pm_h is not None else "N/A",
+                    "qa_hours": qa_h if qa_h is not None else "N/A",
                     "total_feature_cost_usd": total_feature_cost
                 })
 
             df_features = pd.DataFrame(feature_rows)
-            df_features = df_features[["feature_name", "description", "phase", "duration_hours", "total_feature_cost_usd"]]
+            df_features = df_features[
+                ["feature_name", "description", "phase", "duration_hours",
+                 "fullstack_hours", "ai_hours", "ui_ux_hours", "pm_hours", "qa_hours",
+                 "total_feature_cost_usd"]
+            ]
             st.dataframe(df_features, use_container_width=True)
         else:
             st.info("No features found in parsed JSON.")
@@ -567,5 +553,6 @@ Take a deep breath and work on this problem step-by-step.
         st.code(response, language="text")
 
     st.markdown("</div>", unsafe_allow_html=True)
+
 
 
