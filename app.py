@@ -303,6 +303,64 @@ HOURS & COST DISTRIBUTION:
 - cost = sum(hours * rate).
 - Sum of all feature costs = total_estimated_cost_usd.
 
+### SMART HOUR RANGE MODEL (to ensure realistic estimates)
+- Determine each feature's "module_type" from its name/description and constrain raw hours to the ranges below **before** role-splitting. Ranges represent typical total feature hours (all roles combined) **prior** to PM/QA/UI allocation adjustments:
+  - Auth & Roles: 40–80
+  - CRUD Dashboard (per entity/set): 60–120
+  - KYC / Complex Forms (validation, uploads): 80–140
+  - Media Handling (upload, transcode, CDN): 100–150
+  - Integrations (per third-party API): 60–120
+  - Notifications (email/push/SMS): 30–70
+  - Search & Filters: 60–120
+  - Real-time (websockets, presence): 100–180
+  - Payments & Billing: 80–160
+  - Analytics & Reporting: 80–160
+  - Moderation & Review Workflows: 80–160
+  - Admin & Settings: 40–100
+  - AI / RAG / ML Feature: 120–240
+- If a feature spans multiple module_types, pick the dominant one and add +15–25% buffer, but still clamp to **max +20%** above the upper bound unless product_level is "Full Product" **and** the feature explicitly includes complex compliance/scale; in that case, allow up to **max +35%**.
+
+### FEATURE COMPLEXITY MULTIPLIER (context-aware)
+- Derive a complexity_level ∈ {{1,2,3,4,5}} from complexity_score:
+  - score ≤1.2 → level 1 (Simple)
+  - 1.2–2.0 → level 2
+  - 2.0–2.8 → level 3
+  - 2.8–3.6 → level 4
+  - >3.6 → level 5 (Complex)
+- complexity_multiplier by level: [0.85, 1.0, 1.15, 1.35, 1.6]
+- Compute base_feature_hours = median(range_for_module_type) × complexity_multiplier, then clamp to the module_type range (respecting the +20% / +35% rules above).
+
+### REUSE FACTOR (avoid double-counting similar modules)
+- When multiple features share patterns (e.g., repeated CRUD dashboards/forms), apply:
+  - reuse_factor = 0.7 for the 2nd–3rd similar module, 0.6 for 4th+, minimum clamp at 0.5.
+- Adjusted_feature_hours = base_feature_hours × reuse_factor, then re-clamp to **not fall below** the lower bound × 0.6 to avoid under-testing.
+
+### DYNAMIC ROLE HOUR RATIOS (balanced distribution)
+- Distribute Adjusted_feature_hours using the template that best matches module_type. Ratios must sum to 100%. PM hours are included in distribution. Ensure QA ≥10% except for trivial features (duration ≤40h), where QA ≥8%.
+  - Auth & Roles: fullstack 60%, ui_ux 10%, qa 20%, pm 10%, ai 0%
+  - CRUD Dashboard: fullstack 50%, ui_ux 25%, qa 15%, pm 10%, ai 0%
+  - KYC / Forms: fullstack 45%, ui_ux 25%, qa 20%, pm 10%, ai 0%
+  - Media Handling: fullstack 55%, ui_ux 10%, qa 20%, pm 10%, ai 5%
+  - Integrations: fullstack 55%, ui_ux 10%, qa 20%, pm 10%, ai 5%
+  - Notifications: fullstack 50%, ui_ux 15%, qa 20%, pm 10%, ai 5%
+  - Search & Filters: fullstack 55%, ui_ux 15%, qa 20%, pm 10%, ai 0%
+  - Real-time: fullstack 55%, ui_ux 15%, qa 20%, pm 10%, ai 0%
+  - Payments & Billing: fullstack 50%, ui_ux 15%, qa 20%, pm 10%, ai 5%
+  - Analytics & Reporting: fullstack 45%, ui_ux 20%, qa 20%, pm 10%, ai 5%
+  - Moderation Workflows: fullstack 45%, ui_ux 20%, qa 20%, pm 10%, ai 5%
+  - Admin & Settings: fullstack 55%, ui_ux 15%, qa 15%, pm 15%, ai 0%
+  - AI / RAG / ML Feature: ai 35%, fullstack 40%, ui_ux 10%, qa 10%, pm 5%
+- If a role is not materially involved, set its hours to "N/A" and cost 0, but **only** after ensuring the above minimum QA/UI thresholds are satisfied or the feature is explicitly backend-only with duration ≤40h.
+
+### VALIDATION & AUTO-CORRECTIONS (guardrails)
+- Auto-flag and correct if:
+  - Any feature total hours fall outside its module_type range (after multipliers) beyond allowed buffers → snap to nearest bound.
+  - UI/UX or QA < 10% (or <8% for ≤40h features) → raise to minimum by proportionally reducing fullstack.
+  - Any single role >75% of feature hours (except AI/RAG where ai+fullstack combined may reach 80%).
+  - Hours differ by >2× from the mean of similar module_types in this plan → pull towards mean by 25%.
+- Ensure timeline.duration_hours exactly equals the sum of role hours for that feature.
+- Ensure tasks hour_ranges partition the duration sensibly (no overlaps; ranges cover start→end; last range ends at duration).
+
 ------------------------------------------------------------
 BUDGET RULES:
 - If budget provided:
@@ -342,6 +400,7 @@ FINAL INSTRUCTIONS:
 
 Take a deep breath and work on this problem step-by-step.
 """
+
 
     # --- OPENAI CALL ---
     with st.spinner("🧠 Generating estimation using GPT-5..."):
