@@ -1,3 +1,8 @@
+# ai_project_estimator_app.py
+# Complete Streamlit app — copy-paste this file and run with: streamlit run ai_project_estimator_app.py
+# Requirements: streamlit, openai (official OpenAI Python lib), python-dotenv, pandas
+# Make sure OPENAI_API_KEY is set in your environment or in a .env file.
+
 import streamlit as st
 import openai
 import os
@@ -105,6 +110,13 @@ st.markdown(
         margin-bottom: 0.5rem;
     }
 
+    .warning {
+        background: #fff7ed;
+        border-left: 4px solid #f59e0b;
+        padding: .6rem;
+        border-radius: 6px;
+    }
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -124,7 +136,7 @@ st.markdown(
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
-    st.error("❌ OPENAI_API_KEY not found. Please set it as an environment variable.")
+    st.error("❌ OPENAI_API_KEY not found. Please set it as an environment variable (or add to a .env file).")
     st.stop()
 
 # --- INPUT FORM ---
@@ -148,6 +160,216 @@ with st.form("estimation_form"):
     generate = st.form_submit_button("🚀 Generate Estimation")
 st.markdown("</div>", unsafe_allow_html=True)
 
+# --- HELPER: robust JSON extraction ---
+def extract_first_json(text: str):
+    """
+    Scan text and extract the first valid JSON object using json.JSONDecoder.raw_decode.
+    Returns parsed object or None.
+    """
+    decoder = json.JSONDecoder()
+    idx = 0
+    length = len(text)
+    while idx < length:
+        try:
+            obj, end = decoder.raw_decode(text[idx:])
+            return obj
+        except json.JSONDecodeError:
+            idx += 1
+    return None
+
+# --- RATES (only roles that are costed at feature-level) ---
+RATES = {"fullstack": 25, "ai": 30, "ui_ux": 30}
+# Note: PM & QA hours will be returned as cumulative totals but their costs are excluded.
+
+# --- FULL PROMPT (the user requested the full prompt included exactly) ---
+FULL_PROMPT_TEMPLATE = r"""
+Act like a senior Product Strategist and AI-Powered Software Architect (expert in software planning, sprint design, and JSON documentation). Your task: only produce one pure JSON object (no markdown, no prose). Use the inputs inside `{{json_data}}` to plan and estimate a software product.
+
+------------------------------------------------------------
+OBJECTIVE:
+Generate one valid JSON object with exactly four top-level keys: `features`, `resources`, `tech`, and `budget`.
+
+------------------------------------------------------------
+INPUT ({{json_data}}):
+- project_title (optional)
+- project_description (required)
+- product_level ("POC", "MVP", or "Full Product")
+- ui_level ("Simple" or "Polished")
+- platforms (array, e.g. ["Web","iOS"])
+- target_audience (optional)
+- competitors (optional)
+- budget (optional, numeric or string)
+- feature_count (optional integer; if provided, honor unless infeasible)
+
+IMPORTANT CHANGE (PM & QA handling):
+- Do NOT include `pm` or `qa` hours inside any individual **feature** resource lists.
+- Instead compute cumulative `pm_total_hours` and `qa_total_hours` for the **whole project** and return these inside the `budget` object (see BUDGET FORMAT below).
+- **Do not** include `pm` and `qa` costs in the budget calculations — exclude PM and QA cost from all cost totals for now.
+
+------------------------------------------------------------
+OUTPUT FORMAT:
+{
+  "features": [ /* feature objects */ ],
+  "resources": [ /* role + count */ ],
+  "tech": [ /* strings */ ],
+  "budget": { /* budget object, must include pm_total_hours & qa_total_hours */ }
+}
+
+------------------------------------------------------------
+FEATURE OBJECT FORMAT (updated):
+{
+  "feature_name": "<string>",
+  "description": "<string>",
+  "acceptance_criteria": ["<string>","<string>","<string>"],
+  "user_story": "<string>",
+  "dependencies": "<string>",
+  "deliverables": "<string or array>",
+  "resources": [
+    {"role":"fullstack","hours":<number_or_N/A>},
+    {"role":"ai","hours":<number_or_N/A>},
+    {"role":"ui_ux","hours":<number_or_N/A>}
+  ],
+  "timeline": {
+    "phase": "<string>",
+    "duration_hours": <number>,   /* MUST equal sum of the above role-hours for the feature */
+    "tasks": [
+      {"hour_range":"<e.g. 8-24>","responsible_role":"<role>","tasks_summary":"<string>"}
+    ]
+  },
+  "cost_estimate": {
+    "fullstack_cost_usd": <number>,
+    "ai_cost_usd": <number>,
+    "ui_ux_cost_usd": <number>,
+    "total_feature_cost_usd": <number>  /* PM & QA costs NOT included */
+  }
+}
+
+------------------------------------------------------------
+RESOURCES FORMAT:
+[
+  {"role":"fullstack","count":<int>},
+  {"role":"ai","count":<int>},
+  {"role":"ui_ux","count":<int>},
+  {"role":"pm","count":<int>},
+  {"role":"qa","count":<int>}
+]
+
+(You may include pm/qa headcount here for planning/headcount purposes; hours for pm/qa must be returned only in budget as cumulative totals.)
+
+------------------------------------------------------------
+TECH FORMAT:
+["<tech_string_1>", "<tech_string_2>", "<tech_string_3>"]
+
+------------------------------------------------------------
+BUDGET FORMAT (updated — must include PM/QA totals and indicate exclusion):
+{
+  "currency": "USD",
+  "per_feature": [
+    {"feature_name": "<string>", "total_feature_cost_usd": <number>}
+  ],
+  "total_estimated_cost_usd": <number>,   /* SUM of feature costs only: fullstack + ai + ui_ux */
+  "budget_provided": <original_budget_value_or_null>,
+  "within_budget": <true|false|null>,
+  "pm_total_hours": <number>,             /* cumulative PM hours for whole project (not costed) */
+  "qa_total_hours": <number>,             /* cumulative QA hours for whole project (not costed) */
+  "pm_qa_costs_excluded": true,
+  "notes": "<string>"
+}
+
+------------------------------------------------------------
+HOURLY RATES (USD) — used to compute feature-level costs only (PM and QA costs intentionally excluded from budget):
+fullstack = 25
+ai = 30
+ui_ux = 30
+/* PM and QA exist in planning but their costs are excluded. Compute pm_total_hours and qa_total_hours as aggregates. */
+
+------------------------------------------------------------
+FEATURE COUNT & COMPLEXITY RULES:
+(Keep the same full logic as originally specified — compute complexity_score, budget_factor, derive feature_count, clamp and adjust by product_level, decompose monolithic projects, ensure auth/core/admin exist, etc.)
+
+------------------------------------------------------------
+HOURS & COST DISTRIBUTION (adapted for PM/QA change):
+- Use the same SMART HOUR RANGE MODEL and module_type mapping as before to determine *base feature hours*.
+- Apply complexity multipliers, reuse_factor, and dynamic ratios **for per-feature allocation only** but do NOT place PM and QA hours per feature in the output.
+- After computing total_project_hours (sum of all feature duration_hours), compute:
+    pm_total_hours = round( total_project_hours * pm_project_ratio )
+    qa_total_hours = round( total_project_hours * qa_project_ratio )
+  where pm_project_ratio and qa_project_ratio should respect the original minimal/typical project allocations (commonly 10% each), but adjust slightly if features are trivial (ensure QA >=8% for tiny projects).
+- Ensure each feature.timeline.duration_hours equals the sum of its fullstack + ai + ui_ux hours.
+- Costs: compute costs only for fullstack, ai, ui_ux using the HOURLY RATES above. **PM & QA costs must not be included.**
+
+------------------------------------------------------------
+FEATURE COMPLEXITY MULTIPLIER, REUSE FACTOR, DYNAMIC ROLE RATIOS:
+(Keep the same rules and numbers as before for complexity levels, reuse_factor, and the role ratios for distributing feature hours.
+When ratios previously referenced PM and QA percentages, distribute the feature hours proportionally only among fullstack, ai, ui_ux and keep PM/QA out of per-feature allocations — their effort will be calculated as cumulative totals as described above.)
+
+------------------------------------------------------------
+VALIDATION & AUTO-CORRECTIONS (guardrails):
+- Auto-flag and correct:
+  - Any feature total hours must equal the sum of the feature's role hours (fullstack+ai+ui_ux). Snap to nearest bound if outside allowed buffers.
+  - UI/UX or QA guidance thresholds: since QA is not per-feature, ensure QA project total meets minimum thresholds (e.g., QA hours >= 8% of total_project_hours for tiny projects; otherwise raise and annotate in notes).
+  - Any internal inconsistency should be corrected, with rationale in `budget.notes`.
+
+------------------------------------------------------------
+BUDGET RULES:
+- If numeric budget provided:
+  - within_budget = True if numeric_budget >= total_estimated_cost_usd ELSE False.
+- PM and QA costs are excluded from `total_estimated_cost_usd`. If client wants PM/QA costed later, include as a separate option.
+
+------------------------------------------------------------
+RESOURCES RULES:
+- Scale role counts realistically based on scope & budget. Round staff up to nearest integer.
+
+------------------------------------------------------------
+TECH SELECTION:
+- Low budget → managed, lower-cost stack.
+- High budget → scalable, enterprise-grade stack.
+
+------------------------------------------------------------
+VALIDATION:
+- All keys in snake_case.
+- Duration values in hours only.
+- Costs are numbers, no currency symbols.
+- Output = valid JSON only (no markdown or commentary).
+- If you encounter ambiguity in inputs, analyze them deeply, then decide and proceed — but do NOT add unnecessary complexity for simple modules (e.g., simple auth = sign up + login; don't invent advanced flows unless description requires them).
+
+------------------------------------------------------------
+FINAL INSTRUCTIONS:
+1. Use all logic above to generate complete JSON.
+2. Only output the JSON (features, resources, tech, budget).
+3. Include cumulative `pm_total_hours` and `qa_total_hours` in `budget`.
+4. Exclude PM & QA costs from totals — set "pm_qa_costs_excluded": true.
+5. When in doubt, simplify logically but remain consistent.
+"""
+
+# --- MODEL CALL wrapper ---
+def call_model_with_full_prompt(json_input_str: str):
+    """
+    Builds the full prompt by injecting user's JSON into FULL_PROMPT_TEMPLATE and calls the model.
+    Returns the raw model text.
+    """
+    prompt_with_input = FULL_PROMPT_TEMPLATE.replace("{{json_data}}", json_input_str)
+    client = openai.OpenAI(api_key=OPENAI_API_KEY)
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-5",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a strict JSON-only generator for project estimations. "
+                        "Return exactly one valid JSON object with top-level keys: features, resources, tech, budget. "
+                        "Follow the prompt instructions exactly. PM & QA hours must NOT be present per-feature; instead include pm_total_hours and qa_total_hours under budget. PM & QA costs must be excluded from budget totals."
+                    ),
+                },
+                {"role": "user", "content": prompt_with_input},
+            ],
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        # propagate for the UI to handle
+        raise RuntimeError(f"Model/API error: {e}")
+
 # --- GENERATE LOGIC ---
 if generate:
     if not description.strip():
@@ -167,302 +389,57 @@ if generate:
     }
 
     json_data = json.dumps(data, indent=2)
-
-    PROMPT_TEMPLATE = f"""
-Act like a senior Product Strategist and AI-Powered Software Architect (expert in software planning, sprint design, and JSON documentation). Your task: only produce one pure JSON object (no markdown, no prose). Use the inputs inside `{{json_data}}` to plan and estimate a software product.
-
-------------------------------------------------------------
-OBJECTIVE:
-Generate one valid JSON object with exactly four top-level keys: `features`, `resources`, `tech`, and `budget`.
-
-------------------------------------------------------------
-INPUT ({json_data}):
-- project_title (optional)
-- project_description (required)
-- product_level ("POC", "MVP", or "Full Product")
-- ui_level ("Simple" or "Polished")
-- platforms (array, e.g. ["Web","iOS"])
-- target_audience (optional)
-- competitors (optional)
-- budget (optional, numeric or string)
-- feature_count (optional integer; if provided, honor unless infeasible)
-
-------------------------------------------------------------
-OUTPUT FORMAT:
-{{
-  "features": [ /* feature objects */ ],
-  "resources": [ /* role + count */ ],
-  "tech": [ /* strings */ ],
-  "budget": {{ /* budget object */ }}
-}}
-
-------------------------------------------------------------
-FEATURE OBJECT FORMAT:
-{{
-  "feature_name": "<string>",
-  "description": "<string>",
-  "acceptance_criteria": ["<string>","<string>","<string>"],
-  "user_story": "<string>",
-  "dependencies": "<string>",
-  "deliverables": "<string or array>",
-  "resources": [
-    {{"role":"fullstack","hours":"<number_or_N/A>"}},
-    {{"role":"ai","hours":"<number_or_N/A>"}},
-    {{"role":"ui_ux","hours":"<number_or_N/A>"}},
-    {{"role":"pm","hours":"<number_or_N/A>"}},
-    {{"role":"qa","hours":"<number_or_N/A>"}}
-  ],
-  "timeline": {{
-    "phase": "<string>",
-    "duration_hours": <number>,
-    "tasks": [
-      {{"hour_range":"<e.g. 8-24>","responsible_role":"<role>","tasks_summary":"<string>"}}
-    ]
-  }},
-  "cost_estimate": {{
-    "fullstack_cost_usd": <number>,
-    "ai_cost_usd": <number>,
-    "ui_ux_cost_usd": <number>,
-    "pm_cost_usd": <number>,
-    "qa_cost_usd": <number>,
-    "total_feature_cost_usd": <number>
-  }}
-}}
-
-------------------------------------------------------------
-RESOURCES FORMAT:
-[
-  {{"role":"fullstack","count":<int>}},
-  {{"role":"ai","count":<int>}},
-  {{"role":"ui_ux","count":<int>}},
-  {{"role":"pm","count":<int>}},
-  {{"role":"qa","count":<int>}}
-]
-
-------------------------------------------------------------
-TECH FORMAT:
-["<tech_string_1>", "<tech_string_2>", "<tech_string_3>"]
-
-------------------------------------------------------------
-BUDGET FORMAT:
-{{
-  "currency": "USD",
-  "per_feature": [
-    {{"feature_name": "<string>", "total_feature_cost_usd": <number>}}
-  ],
-  "total_estimated_cost_usd": <number>,
-  "budget_provided": <original_budget_value_or_null>,
-  "within_budget": <true|false|null>,
-  "notes": "<string>"
-}}
-
-------------------------------------------------------------
-HOURLY RATES (USD):
-fullstack = 25
-ai = 30
-ui_ux = 30
-pm = 40
-qa = 20
-
-------------------------------------------------------------
-FEATURE COUNT & COMPLEXITY RULES:
-
-1. Compute complexity_score:
-   - product_level_weight: POC=1, MVP=2, Full Product=3
-   - ui_level_weight: Simple=0.8, Polished=1.2
-   - platforms_factor = 1 + 0.25 * (number_of_platforms - 1)
-   - description_density = clamp(len(project_description.split()) / 100, 0.2, 3.0)
-   - keyword_multiplier = +0.5 per keyword in ["marketplace","payments","multi-tenant","integrations","real-time","ML","RAG","chatbot","mental health","analytics"], capped at +2.0
-   - complexity_score = product_level_weight * ui_level_weight * platforms_factor * description_density + keyword_multiplier
-
-2. Apply budget_factor:
-   - budget_factor defaults:
-       - <10,000 USD → 0.6
-       - 10,000–75,000 USD → 1.0
-       - >75,000 USD → 1.5
-   - If no numeric budget, use 1.0
-   - If cost estimate > provided budget, scale budget_factor proportionally
-
-3. feature_count = round(complexity_score * budget_factor)
-   - Clamp: min=1, max=25 (or 50 if user explicitly requested more)
-   - Adjust by product_level:
-       - POC: prefer 3–8 atomic features
-       - MVP: 5–12
-       - Full Product: 6–20
-   - If single-deliverable project (title/desc includes “POC” or is monolithic), decompose into atomic features (e.g., ingestion, retrieval, UI, analytics)
-   - Always ensure minimum viable functional decomposition (e.g., auth, core, admin)
-
-------------------------------------------------------------
-HOURS & COST DISTRIBUTION:
-- total_project_hours proportional to complexity_score and product_level.
-- Sum of feature.duration_hours = total_project_hours.
-- For each feature:
-  - Assign higher ai/fullstack hours for core/AI features.
-  - Assign higher ui_ux hours for UI-heavy ones.
-  - Assign “N/A” and 0 cost to unused roles.
-- cost = sum(hours * rate).
-- Sum of all feature costs = total_estimated_cost_usd.
-
-### SMART HOUR RANGE MODEL (to ensure realistic estimates)
-- Determine each feature's "module_type" from its name/description and constrain raw hours to the ranges below **before** role-splitting. Ranges represent typical total feature hours (all roles combined) **prior** to PM/QA/UI allocation adjustments:
-  - Auth & Roles: 40–80
-  - CRUD Dashboard (per entity/set): 60–120
-  - KYC / Complex Forms (validation, uploads): 80–140
-  - Media Handling (upload, transcode, CDN): 100–150
-  - Integrations (per third-party API): 60–120
-  - Notifications (email/push/SMS): 30–70
-  - Search & Filters: 60–120
-  - Real-time (websockets, presence): 100–180
-  - Payments & Billing: 80–160
-  - Analytics & Reporting: 80–160
-  - Moderation & Review Workflows: 80–160
-  - Admin & Settings: 40–100
-  - AI / RAG / ML Feature: 120–240
-- If a feature spans multiple module_types, pick the dominant one and add +15–25% buffer, but still clamp to **max +20%** above the upper bound unless product_level is "Full Product" **and** the feature explicitly includes complex compliance/scale; in that case, allow up to **max +35%**.
-
-### FEATURE COMPLEXITY MULTIPLIER (context-aware)
-- Derive a complexity_level ∈ {{1,2,3,4,5}} from complexity_score:
-  - score ≤1.2 → level 1 (Simple)
-  - 1.2–2.0 → level 2
-  - 2.0–2.8 → level 3
-  - 2.8–3.6 → level 4
-  - >3.6 → level 5 (Complex)
-- complexity_multiplier by level: [0.85, 1.0, 1.15, 1.35, 1.6]
-- Compute base_feature_hours = median(range_for_module_type) × complexity_multiplier, then clamp to the module_type range (respecting the +20% / +35% rules above).
-
-### REUSE FACTOR (avoid double-counting similar modules)
-- When multiple features share patterns (e.g., repeated CRUD dashboards/forms), apply:
-  - reuse_factor = 0.7 for the 2nd–3rd similar module, 0.6 for 4th+, minimum clamp at 0.5.
-- Adjusted_feature_hours = base_feature_hours × reuse_factor, then re-clamp to **not fall below** the lower bound × 0.6 to avoid under-testing.
-
-### DYNAMIC ROLE HOUR RATIOS (balanced distribution)
-- Distribute Adjusted_feature_hours using the template that best matches module_type. Ratios must sum to 100%. PM hours are included in distribution. Ensure QA ≥10% except for trivial features (duration ≤40h), where QA ≥8%.
-  - Auth & Roles: fullstack 60%, ui_ux 10%, qa 20%, pm 10%, ai 0%
-  - CRUD Dashboard: fullstack 50%, ui_ux 25%, qa 15%, pm 10%, ai 0%
-  - KYC / Forms: fullstack 45%, ui_ux 25%, qa 20%, pm 10%, ai 0%
-  - Media Handling: fullstack 55%, ui_ux 10%, qa 20%, pm 10%, ai 5%
-  - Integrations: fullstack 55%, ui_ux 10%, qa 20%, pm 10%, ai 5%
-  - Notifications: fullstack 50%, ui_ux 15%, qa 20%, pm 10%, ai 5%
-  - Search & Filters: fullstack 55%, ui_ux 15%, qa 20%, pm 10%, ai 0%
-  - Real-time: fullstack 55%, ui_ux 15%, qa 20%, pm 10%, ai 0%
-  - Payments & Billing: fullstack 50%, ui_ux 15%, qa 20%, pm 10%, ai 5%
-  - Analytics & Reporting: fullstack 45%, ui_ux 20%, qa 20%, pm 10%, ai 5%
-  - Moderation Workflows: fullstack 45%, ui_ux 20%, qa 20%, pm 10%, ai 5%
-  - Admin & Settings: fullstack 55%, ui_ux 15%, qa 15%, pm 15%, ai 0%
-  - AI / RAG / ML Feature: ai 35%, fullstack 40%, ui_ux 10%, qa 10%, pm 5%
-- If a role is not materially involved, set its hours to "N/A" and cost 0, but **only** after ensuring the above minimum QA/UI thresholds are satisfied or the feature is explicitly backend-only with duration ≤40h.
-
-### VALIDATION & AUTO-CORRECTIONS (guardrails)
-- Auto-flag and correct if:
-  - Any feature total hours fall outside its module_type range (after multipliers) beyond allowed buffers → snap to nearest bound.
-  - UI/UX or QA < 10% (or <8% for ≤40h features) → raise to minimum by proportionally reducing fullstack.
-  - Any single role >75% of feature hours (except AI/RAG where ai+fullstack combined may reach 80%).
-  - Hours differ by >2× from the mean of similar module_types in this plan → pull towards mean by 25%.
-- Ensure timeline.duration_hours exactly equals the sum of role hours for that feature.
-- Ensure tasks hour_ranges partition the duration sensibly (no overlaps; ranges cover start→end; last range ends at duration).
-
-------------------------------------------------------------
-BUDGET RULES:
-- If budget provided:
-  - within_budget = True if numeric_budget >= total_estimated_cost_usd else False.
-- If non-numeric, set within_budget = null.
-- Include reasoning in `notes` if scope trimmed for budget.
-
-------------------------------------------------------------
-RESOURCES RULES:
-- Scale team size realistically based on scope & budget.
-- Round fractional staffing up to nearest integer but adjust hours accordingly.
-
-------------------------------------------------------------
-TECH SELECTION:
-- Low budget → managed, low-cost stack.
-- High budget → scalable, enterprise-grade stack.
-
-------------------------------------------------------------
-VALIDATION:
-- All keys in snake_case.
-- Duration values in hours only.
-- Costs are numbers, no currency symbols.
-- Every feature includes all five roles.
-- Output = valid JSON only (no markdown or commentary).
-
-------------------------------------------------------------
-FINAL INSTRUCTIONS:
-1. Use all logic above to generate complete JSON.
-2. Never emit explanations or extra text.
-3. Output must contain only JSON with:
-   - features
-   - resources
-   - tech
-   - budget
-4. All cost computations must match the hourly rates table.
-5. When in doubt, simplify logically but remain consistent.
-
-Take a deep breath and work on this problem step-by-step.
-"""
-
-
-    # --- OPENAI CALL ---
     with st.spinner("🧠 Generating estimation using GPT-5..."):
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        completion = client.chat.completions.create(
-            model="gpt-5", messages=[{"role": "user", "content": PROMPT_TEMPLATE}]
-        )
-
-    response = completion.choices[0].message.content
+        try:
+            response = call_model_with_full_prompt(json_data)
+        except Exception as e:
+            st.error(str(e))
+            st.stop()
 
     # --- DISPLAY OUTPUT ---
     st.markdown("<div class='result-section'>", unsafe_allow_html=True)
     st.success("✅ Estimation Generated Successfully!")
 
-    # Robust JSON extraction
-    if "Full JSON Object" in response:
-        parts = response.split("Full JSON Object", 1)
-        markdown_part = parts[0].strip()
-        json_part = parts[1].strip()
-    else:
-        json_start = response.find("{")
-        json_end = response.rfind("}")
-        if json_start != -1 and json_end != -1 and json_end > json_start:
-            markdown_part = response[:json_start].strip()
-            json_part = response[json_start : json_end + 1].strip()
-        else:
-            markdown_part = response
-            json_part = ""
-
-    st.subheader("📘 Readable Markdown Summary")
-    if markdown_part:
-        st.markdown(markdown_part)
-    else:
-        st.info("No Markdown summary found in response.")
-
-    st.subheader("📊 Structured Estimation Tables")
-
+    # Extract JSON robustly
+    parsed_json = None
     try:
-        json_cleaned = (
-            json_part.strip().replace("```json", "").replace("```", "").strip()
-        )
-        if not (json_cleaned.startswith("{") and json_cleaned.endswith("}")):
-            s = json_cleaned.find("{")
-            e = json_cleaned.rfind("}")
-            if s != -1 and e != -1 and e > s:
-                json_cleaned = json_cleaned[s : e + 1]
+        parsed_json = extract_first_json(response)
+        if parsed_json is None:
+            # fallback: try to salvage with previous heuristics
+            json_start = response.find("{")
+            json_end = response.rfind("}")
+            if json_start != -1 and json_end != -1 and json_end > json_start:
+                json_str = response[json_start:json_end + 1]
+                parsed_json = json.loads(json_str)
+    except Exception as e:
+        st.warning(f"⚠️ Could not parse JSON automatically: {e}")
+        parsed_json = None
 
-        parsed_json = json.loads(json_cleaned)
+    st.subheader("📘 Readable Markup (if any)")
+    # Show any text before JSON if present (often none because we enforce JSON-only)
+    try:
+        if parsed_json is None:
+            st.info("No valid JSON parsed from model response. Showing raw response below.")
+            st.code(response, language="text")
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.stop()
+    except Exception:
+        pass
 
+    # Continue with parsed_json rendering
+    try:
         expected = {"features", "resources", "tech", "budget"}
         if not expected.issubset(parsed_json.keys()):
             st.warning(
                 "⚠️ Parsed JSON missing some expected top-level keys (features/resources/tech/budget). Rendering available keys."
             )
 
-        RATES = {"fullstack": 25, "ai": 30, "ui_ux": 30, "pm": 40, "qa": 20}
-
         # ---- FEATURES TABLE ----
         st.markdown(
-            "<div class='section-title'>🏗️ Features Overview</div>",
+            "<div class='section-title'>🏗️ Features Overview (PM & QA excluded per feature)</div>",
             unsafe_allow_html=True,
         )
+
         features = parsed_json.get("features", [])
         if features and isinstance(features, list):
             feature_rows = []
@@ -476,6 +453,15 @@ Take a deep breath and work on this problem step-by-step.
                             s = v.strip()
                             if s.lower() in ("n/a", "na", "-", ""):
                                 return None
+                            # support ranges like "20-30" by taking average
+                            if "-" in s:
+                                parts = s.split("-", 1)
+                                try:
+                                    a = float(parts[0].strip())
+                                    b = float(parts[1].strip())
+                                    return (a + b) / 2.0
+                                except:
+                                    return None
                             return float(s)
                     except:
                         return None
@@ -490,16 +476,14 @@ Take a deep breath and work on this problem step-by-step.
                 fullstack_h = res_map.get("fullstack")
                 ai_h = res_map.get("ai")
                 ui_ux_h = res_map.get("ui_ux")
-                pm_h = res_map.get("pm")
-                qa_h = res_map.get("qa")
 
                 duration_hours = sum(
                     h
-                    for h in [fullstack_h, ai_h, ui_ux_h, pm_h, qa_h]
+                    for h in [fullstack_h, ai_h, ui_ux_h]
                     if isinstance(h, (int, float))
                 )
 
-                # Compute total cost using hourly rates
+                # Compute total cost using hourly rates (pm/qa excluded intentionally)
                 def compute_cost(hours, rate):
                     return (
                         round(hours * rate, 2)
@@ -511,8 +495,6 @@ Take a deep breath and work on this problem step-by-step.
                     compute_cost(fullstack_h, RATES["fullstack"])
                     + compute_cost(ai_h, RATES["ai"])
                     + compute_cost(ui_ux_h, RATES["ui_ux"])
-                    + compute_cost(pm_h, RATES["pm"])
-                    + compute_cost(qa_h, RATES["qa"])
                 )
                 total_feature_cost = round(total_feature_cost, 2)
 
@@ -525,39 +507,35 @@ Take a deep breath and work on this problem step-by-step.
                         ),
                         "phase": f.get("timeline", {}).get("phase", ""),
                         "duration_hours": duration_hours,
-                        "fullstack_hours": (
-                            fullstack_h if fullstack_h is not None else "N/A"
-                        ),
+                        "fullstack_hours": fullstack_h if fullstack_h is not None else "N/A",
                         "ai_hours": ai_h if ai_h is not None else "N/A",
                         "ui_ux_hours": ui_ux_h if ui_ux_h is not None else "N/A",
-                        "pm_hours": pm_h if pm_h is not None else "N/A",
-                        "qa_hours": qa_h if qa_h is not None else "N/A",
                         "total_feature_cost_usd": total_feature_cost,
                     }
                 )
 
             df_features = pd.DataFrame(feature_rows)
-            df_features = df_features[
-                [
-                    "feature_name",
-                    "description",
-                    "phase",
-                    "duration_hours",
-                    "fullstack_hours",
-                    "ai_hours",
-                    "ui_ux_hours",
-                    "pm_hours",
-                    "qa_hours",
-                    "total_feature_cost_usd",
+            # Only show columns relevant now (no pm/qa columns)
+            if not df_features.empty:
+                df_features = df_features[
+                    [
+                        "feature_name",
+                        "description",
+                        "phase",
+                        "duration_hours",
+                        "fullstack_hours",
+                        "ai_hours",
+                        "ui_ux_hours",
+                        "total_feature_cost_usd",
+                    ]
                 ]
-            ]
             st.dataframe(df_features, use_container_width=True)
         else:
             st.info("No features found in parsed JSON.")
 
         # ---- RESOURCES TABLE ----
         st.markdown(
-            "<div class='section-title'>👥 Resource Summary</div>",
+            "<div class='section-title'>👥 Resource Summary (headcounts)</div>",
             unsafe_allow_html=True,
         )
         resources = parsed_json.get("resources", [])
@@ -590,7 +568,7 @@ Take a deep breath and work on this problem step-by-step.
 
         # ---- BUDGET SUMMARY ----
         st.markdown(
-            "<div class='section-title'>💰 Budget Summary</div>", unsafe_allow_html=True
+            "<div class='section-title'>💰 Budget & PM/QA Summary</div>", unsafe_allow_html=True
         )
         budget_obj = parsed_json.get("budget", {})
         if budget_obj and isinstance(budget_obj, dict):
@@ -600,8 +578,11 @@ Take a deep breath and work on this problem step-by-step.
             budget_provided = budget_obj.get("budget_provided", None)
             within_budget = budget_obj.get("within_budget", None)
             notes = budget_obj.get("notes", "")
+            pm_total_hours = budget_obj.get("pm_total_hours", None)
+            qa_total_hours = budget_obj.get("qa_total_hours", None)
+            pm_qa_excluded = budget_obj.get("pm_qa_costs_excluded", True)
 
-            c1, c2, c3 = st.columns([2, 2, 4])
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
             with c1:
                 st.metric("Currency", currency)
             with c2:
@@ -614,6 +595,15 @@ Take a deep breath and work on this problem step-by-step.
                     "Budget Provided",
                     str(budget_provided if budget_provided is not None else "null"),
                 )
+            with c4:
+                st.metric("PM/QA Costed?", "No" if pm_qa_excluded else "Yes")
+
+            # Show PM and QA cumulative hours (these are not costed in totals)
+            c5, c6 = st.columns([2, 2])
+            with c5:
+                st.metric("PM Total Hours (project)", str(pm_total_hours if pm_total_hours is not None else "N/A"))
+            with c6:
+                st.metric("QA Total Hours (project)", str(qa_total_hours if qa_total_hours is not None else "N/A"))
 
             st.write(f"**Within budget?** {within_budget}")
 
@@ -632,6 +622,39 @@ Take a deep breath and work on this problem step-by-step.
                 st.write(notes)
         else:
             st.info("No budget object found in parsed JSON.")
+
+        # ---- LOCAL CONSISTENCY CHECKS & WARNINGS ----
+        # Compute local sums to ensure budgets match (note: PM/QA excluded)
+        try:
+            local_total = 0.0
+            if features and isinstance(features, list):
+                for f in features:
+                    # compute per-feature cost from parsed role hours
+                    resources_list = f.get("resources", [])
+                    res_map = {r.get("role", "").lower(): r.get("hours", 0) for r in resources_list}
+                    def to_float(v):
+                        try:
+                            return float(v)
+                        except:
+                            return 0.0
+                    fs = to_float(res_map.get("fullstack", 0))
+                    ai_h = to_float(res_map.get("ai", 0))
+                    ui = to_float(res_map.get("ui_ux", 0))
+                    local_total += round(fs * RATES["fullstack"] + ai_h * RATES["ai"] + ui * RATES["ui_ux"], 2)
+
+            local_total = round(local_total, 2)
+            if total_estimated is not None:
+                # total_estimated might be string; try parse
+                try:
+                    total_est_val = float(total_estimated)
+                except:
+                    total_est_val = None
+
+                if total_est_val is not None and abs(local_total - total_est_val) > 1.0:
+                    st.warning(f"⚠️ Estimated total from model ({total_estimated}) differs from locally computed total ({local_total}). We display the model total but local recomputation is shown here for comparison.")
+                    st.info(f"Local recomputed total (excl. PM/QA): {local_total} USD")
+        except Exception as e:
+            st.info("Could not run local consistency checks: " + str(e))
 
     except Exception as e:
         st.warning(
