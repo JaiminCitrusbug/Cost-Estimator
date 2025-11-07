@@ -575,7 +575,7 @@ if generate:
             currency = budget_obj.get("currency", "USD")
             per_feature = budget_obj.get("per_feature", [])
             total_estimated = budget_obj.get("total_estimated_cost_usd", None)
-            budget_provided = budget_obj.get("budget_provided", None)
+            budget_provided = budget
             within_budget = budget_obj.get("within_budget", None)
             notes = budget_obj.get("notes", "")
             pm_total_hours = budget_obj.get("pm_total_hours", None)
