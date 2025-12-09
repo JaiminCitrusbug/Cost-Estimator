@@ -1,6 +1,6 @@
-# ai_project_estimator_app.py 
+# ai_project_estimator_app.py
 # Complete Streamlit app — copy-paste this file and run with: streamlit run ai_project_estimator_app.py
-# Requirements: streamlit, openai (official OpenAI lib), python-dotenv, pandas, PyPDF2, python-docx
+# Requirements: streamlit, openai (official OpenAI Python lib), python-dotenv, pandas
 # Make sure OPENAI_API_KEY is set in your environment or in a .env file.
 
 import streamlit as st
@@ -9,8 +9,6 @@ import os
 import json
 from dotenv import load_dotenv
 import pandas as pd
-from PyPDF2 import PdfReader
-from docx import Document
 
 load_dotenv()
 
@@ -19,19 +17,14 @@ st.set_page_config(
     page_title="AI Project Estimation Generator", layout="centered", page_icon="🤖"
 )
 
-# --- CSS STYLING (Improved UI/UX) ---
+# --- CSS STYLING (Professional Look) ---
 st.markdown(
     """
 <style>
     [data-testid="stAppViewContainer"] {
-        background-color: #f3f4f6;
+        background-color: #ffffff;
         font-family: 'Inter', sans-serif;
         color: #111827;
-    }
-
-    [data-testid="stMainBlockContainer"] {
-        padding-top: 2rem;
-        padding-bottom: 3rem;
     }
 
     h1, h2, h3, h4, h5 {
@@ -49,91 +42,68 @@ st.markdown(
 
     .subtitle {
         font-size: 0.95rem;
-        color: #4b5563;
+        color: #555;
         margin-bottom: 1.5rem;
     }
 
     .form-card {
-        background: #ffffff;
-        padding: 1.8rem 2.2rem;
-        border-radius: 14px;
+        background: #f9fafb;
+        padding: 2rem 2.5rem;
+        border-radius: 10px;
         border: 1px solid #e5e7eb;
-        box-shadow: 0px 8px 20px rgba(15,23,42,0.04);
+        box-shadow: 0px 2px 6px rgba(0,0,0,0.04);
         width: 100%;
-        max-width: 900px;
+        max-width: 700px;
         margin: 0 auto;
-    }
-
-    .section-label {
-        font-size: 0.9rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        color: #6b7280;
-        margin-bottom: 0.25rem;
     }
 
     label {
         font-weight: 600 !important;
-        font-size: 0.95rem !important;
-        color: #111827 !important;
+        font-size: 1rem !important;
+        color: #1f2937 !important;
     }
 
     input, textarea, select {
-        border-radius: 10px !important;
+        border-radius: 8px !important;
         border: 1px solid #e5e7eb !important;
-        background-color: #f9fafb !important;
+        background-color: #f3f4f6 !important;
         color: #111827 !important;
-        padding: 0.6rem 0.7rem !important;
+        padding: 0.6rem !important;
     }
 
     textarea {
-        min-height: 140px !important;
-    }
-
-    [data-testid="stFileUploader"] section {
-        border-radius: 10px !important;
-        border: 1px dashed #d1d5db !important;
-        background-color: #f9fafb !important;
-    }
-
-    [data-testid="stFileUploader"] div[role="button"] {
-        border-radius: 999px !important;
+        min-height: 120px !important;
     }
 
     div.stButton > button:first-child {
         background-color: #111827;
         color: white;
         border: none;
-        border-radius: 999px;
+        border-radius: 6px;
         font-size: 16px;
         font-weight: 600;
-        padding: 0.7rem 1.4rem;
+        padding: 0.6rem 1.2rem;
         width: 100%;
         transition: all 0.2s ease;
-        margin-top: 1.2rem;
+        margin-top: 1rem;
     }
 
     div.stButton > button:first-child:hover {
         background-color: #1e293b;
         transform: translateY(-1px);
-        box-shadow: 0 8px 18px rgba(15,23,42,0.25);
     }
 
     .result-section {
-        background: #ffffff;
-        border-radius: 14px;
+        background: #f9fafb;
+        border-radius: 10px;
         border: 1px solid #e5e7eb;
-        padding: 1.8rem;
+        padding: 1.5rem;
         margin-top: 2rem;
-        box-shadow: 0 10px 25px rgba(15,23,42,0.06);
-        max-width: 1100px;
-        margin-left: auto;
-        margin-right: auto;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.05);
     }
 
     .section-title {
-        font-size: 1.1rem;
+        font-size: 1.2rem;
         font-weight: 600;
         color: #111827;
         margin-top: 1.5rem;
@@ -147,23 +117,6 @@ st.markdown(
         border-radius: 6px;
     }
 
-    .hint-text {
-        font-size: 0.8rem;
-        color: #6b7280;
-        margin-top: 0.15rem;
-    }
-
-    .badge-inline {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.1rem 0.5rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        background: #eef2ff;
-        color: #4f46e5;
-        margin-left: 0.5rem;
-    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -175,7 +128,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 st.markdown(
-    "<div class='subtitle'>Plan, estimate, and structure your AI/software project with realistic scope, hours, and cost breakdown — powered by GPT-5.</div>",
+    "<div class='subtitle'>Plan, estimate, and structure your project like a pro — powered by GPT-5.</div>",
     unsafe_allow_html=True,
 )
 
@@ -185,6 +138,27 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     st.error("❌ OPENAI_API_KEY not found. Please set it as an environment variable (or add to a .env file).")
     st.stop()
+
+# --- INPUT FORM ---
+st.markdown("<div class='form-card'>", unsafe_allow_html=True)
+with st.form("estimation_form"):
+    st.subheader("📋 Project Input Details")
+
+    title = st.text_input("🧾 Project Title (optional)")
+    description = st.text_area("📝 Project Description (required)", height=150)
+    product_level = st.selectbox("⚙️ Product Level", ["POC", "MVP", "Full Product"])
+    ui_level = st.selectbox("🎨 UI Level", ["Simple", "Polished"])
+    platforms = st.multiselect(
+        "💻 App Platform(s)", ["Web", "iOS", "Android", "Desktop"]
+    )
+    target_audience = st.text_input("🎯 Target Audience (optional)")
+    competitors = st.text_input("🏁 Competitors (optional)")
+    budget = st.text_input(
+        "💰 Estimated Budget (optional)", placeholder="e.g. $15,000 – $25,000"
+    )
+
+    generate = st.form_submit_button("🚀 Generate Estimation")
+st.markdown("</div>", unsafe_allow_html=True)
 
 # --- HELPER: robust JSON extraction ---
 def extract_first_json(text: str):
@@ -203,43 +177,11 @@ def extract_first_json(text: str):
             idx += 1
     return None
 
-# --- HELPER: extract text from uploaded requirements file ---
-def extract_text_from_requirements_file(uploaded_file) -> str:
-    """
-    Supports PDF and DOCX requirement files.
-    Returns extracted text (best-effort) or empty string on failure.
-    """
-    if uploaded_file is None:
-        return ""
-
-    filename = (uploaded_file.name or "").lower()
-
-    try:
-        if filename.endswith(".pdf"):
-            reader = PdfReader(uploaded_file)
-            text_chunks = []
-            for page in reader.pages:
-                page_text = page.extract_text() or ""
-                text_chunks.append(page_text)
-            return "\n".join(text_chunks).strip()
-
-        elif filename.endswith(".docx"):
-            doc = Document(uploaded_file)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            return "\n".join(paragraphs).strip()
-
-        # If any other extension slips in, ignore gracefully
-        else:
-            return ""
-    except Exception as e:
-        st.warning(f"⚠️ Could not read the uploaded file ({filename}): {e}")
-        return ""
-
 # --- RATES (only roles that are costed at feature-level) ---
 RATES = {"fullstack": 25, "ai": 30, "ui_ux": 30}
 # Note: PM & QA hours will be returned as cumulative totals but their costs are excluded.
 
-# --- FULL PROMPT (same as provided) ---
+# --- FULL PROMPT (the user requested the full prompt included exactly) ---
 FULL_PROMPT_TEMPLATE = r"""
 You are a senior Product Strategist and AI-Powered Software Architect with expertise in accurate software estimation, sprint planning, and scope management. Your task: produce one valid JSON object (no markdown, no prose) that realistically plans and estimates a software product.
 
@@ -620,129 +562,25 @@ def call_model_with_full_prompt(json_input_str: str):
         # propagate for the UI to handle
         raise RuntimeError(f"Model/API error: {e}")
 
-# --- INPUT FORM (Improved UX + Requirements File) ---
-st.markdown("<div class='form-card'>", unsafe_allow_html=True)
-with st.form("estimation_form"):
-    st.markdown("<div class='section-label'>Project Overview</div>", unsafe_allow_html=True)
-    st.subheader("📋 Project Input Details")
-
-    # Top-level layout: two columns for core meta
-    col_left, col_right = st.columns(2)
-
-    with col_left:
-        title = st.text_input("🧾 Project Title (optional)")
-        product_level = st.selectbox("⚙️ Product Level", ["POC", "MVP", "Full Product"])
-        ui_level = st.selectbox("🎨 UI Level", ["Simple", "Polished"])
-
-    with col_right:
-        platforms = st.multiselect(
-            "💻 App Platform(s)",
-            ["Web", "iOS", "Android", "Desktop"],
-            help="Select one or more platforms where this product will be available.",
-        )
-        budget = st.text_input(
-            "💰 Estimated Budget (optional)",
-            placeholder="e.g. 15000–25000 (USD equivalent)",
-            help="This is used only for comparison in the estimation. You can leave it blank.",
-        )
-
-    st.markdown("---")
-
-    # Requirements input: text + file upload
-    st.markdown(
-        "<div class='section-label'>Requirements</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "Provide your requirements either as **free-text** or by **uploading a document**."
-        " <span class='badge-inline'>At least one is required</span>",
-        unsafe_allow_html=True,
-    )
-
-    description = st.text_area(
-        "📝 Project Requirements / Description",
-        height=170,
-        placeholder="Describe the product, core use-cases, users, and any must-have features...",
-    )
-    st.markdown(
-        "<div class='hint-text'>You can keep this high-level if you upload a detailed requirements document.</div>",
-        unsafe_allow_html=True,
-    )
-
-    uploaded_req_file = st.file_uploader(
-        "📎 Upload Requirements Document (optional, PDF or DOCX)",
-        type=["pdf", "docx"],
-        help="Attach a PRD, BRD, or any requirement document. The content will be extracted and fed into the estimator.",
-    )
-    st.markdown(
-        "<div class='hint-text'>If you upload a file and also write a description, both will be combined and used as input.</div>",
-        unsafe_allow_html=True,
-    )
-
-    st.markdown("---")
-
-    # Additional context in an expander
-    with st.expander("🔍 Additional Context (optional)", expanded=False):
-        target_audience = st.text_input(
-            "🎯 Target Audience",
-            placeholder="e.g. early-stage startup founders, internal ops team, data analysts...",
-        )
-        competitors = st.text_input(
-            "🏁 Competitors or Reference Products",
-            placeholder="e.g. Notion, Jira, Linear, custom in-house tool...",
-        )
-
-    generate = st.form_submit_button("🚀 Generate Estimation")
-
-st.markdown("</div>", unsafe_allow_html=True)
-
 # --- GENERATE LOGIC ---
 if generate:
-    # Enforce: at least one of text description or file is required
-    if not description.strip() and uploaded_req_file is None:
-        st.warning("⚠️ Please either provide a project description or upload a requirements file (PDF/DOCX). At least one is required.")
+    if not description.strip():
+        st.warning("⚠️ Please provide a project description before generating.")
         st.stop()
 
-    # Extract text from uploaded file if provided
-    extracted_text = ""
-    if uploaded_req_file is not None:
-        extracted_text = extract_text_from_requirements_file(uploaded_req_file)
-
-        if not extracted_text:
-            st.info("ℹ️ The uploaded file did not yield readable text or was empty. The estimator will rely on the typed description.")
-
-    # Build combined project description to send to the model
-    description_parts = []
-
-    if description.strip():
-        description_parts.append("MANUAL PROJECT DESCRIPTION:\n" + description.strip())
-
-    if extracted_text.strip():
-        description_parts.append(
-            "EXTRACTED REQUIREMENTS FROM UPLOADED DOCUMENT:\n" + extracted_text.strip()
-        )
-
-    # If no manual description but file text exists, use that
-    if not description_parts:
-        st.warning("⚠️ No usable description or extracted requirements found. Please add a description or try another file.")
-        st.stop()
-
-    combined_project_description = "\n\n".join(description_parts)
-
-    # Prepare input JSON for the model
+    # Prepare input JSON
     data = {
         "project_title": title.strip(),
-        "project_description": combined_project_description,
+        "project_description": description.strip(),
         "product_level": product_level.strip(),
         "ui_level": ui_level.strip(),
         "platforms": platforms,
-        "target_audience": (target_audience.strip() if 'target_audience' in locals() else ""),
-        "competitors": (competitors.strip() if 'competitors' in locals() else ""),
-        "budget": (budget.strip() if budget else ""),
+        "target_audience": target_audience.strip(),
+        "competitors": competitors.strip(),
+        "budget": budget.strip(),
     }
 
     json_data = json.dumps(data, indent=2)
-
     with st.spinner("🧠 Generating estimation using GPT-5..."):
         try:
             response = call_model_with_full_prompt(json_data)
@@ -759,6 +597,7 @@ if generate:
     try:
         parsed_json = extract_first_json(response)
         if parsed_json is None:
+            # fallback: try to salvage with previous heuristics
             json_start = response.find("{")
             json_end = response.rfind("}")
             if json_start != -1 and json_end != -1 and json_end > json_start:
@@ -768,12 +607,16 @@ if generate:
         st.warning(f"⚠️ Could not parse JSON automatically: {e}")
         parsed_json = None
 
-    st.subheader("📘 Parsed Estimation JSON")
-    if parsed_json is None:
-        st.info("No valid JSON parsed from model response. Showing raw response below.")
-        st.code(response, language="json")
-        st.markdown("</div>", unsafe_allow_html=True)
-        st.stop()
+    st.subheader("📘 Readable Markup (if any)")
+    # Show any text before JSON if present (often none because we enforce JSON-only)
+    try:
+        if parsed_json is None:
+            st.info("No valid JSON parsed from model response. Showing raw response below.")
+            st.code(response, language="text")
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.stop()
+    except Exception:
+        pass
 
     # Continue with parsed_json rendering
     try:
@@ -792,29 +635,30 @@ if generate:
         features = parsed_json.get("features", [])
         if features and isinstance(features, list):
             feature_rows = []
-
-            def parse_hours(v):
-                try:
-                    if isinstance(v, (int, float)):
-                        return float(v)
-                    if isinstance(v, str):
-                        s = v.strip()
-                        if s.lower() in ("n/a", "na", "-", ""):
-                            return None
-                        if "-" in s:
-                            parts = s.split("-", 1)
-                            try:
-                                a = float(parts[0].strip())
-                                b = float(parts[1].strip())
-                                return (a + b) / 2.0
-                            except:
-                                return None
-                        return float(s)
-                except:
-                    return None
-                return None
-
             for f in features:
+
+                def parse_hours(v):
+                    try:
+                        if isinstance(v, (int, float)):
+                            return float(v)
+                        if isinstance(v, str):
+                            s = v.strip()
+                            if s.lower() in ("n/a", "na", "-", ""):
+                                return None
+                            # support ranges like "20-30" by taking average
+                            if "-" in s:
+                                parts = s.split("-", 1)
+                                try:
+                                    a = float(parts[0].strip())
+                                    b = float(parts[1].strip())
+                                    return (a + b) / 2.0
+                                except:
+                                    return None
+                            return float(s)
+                    except:
+                        return None
+                    return None
+
                 resources_list = f.get("resources", [])
                 res_map = {
                     r.get("role", "").lower(): parse_hours(r.get("hours", "N/A"))
@@ -826,9 +670,12 @@ if generate:
                 ui_ux_h = res_map.get("ui_ux")
 
                 duration_hours = sum(
-                    h for h in [fullstack_h, ai_h, ui_ux_h] if isinstance(h, (int, float))
+                    h
+                    for h in [fullstack_h, ai_h, ui_ux_h]
+                    if isinstance(h, (int, float))
                 )
 
+                # Compute total cost using hourly rates (pm/qa excluded intentionally)
                 def compute_cost(hours, rate):
                     return (
                         round(hours * rate, 2)
@@ -843,15 +690,13 @@ if generate:
                 )
                 total_feature_cost = round(total_feature_cost, 2)
 
-                desc_text = f.get("description", "") or ""
-                trimmed_desc = (
-                    desc_text[:250] + ("..." if len(desc_text) > 250 else "")
-                )
-
                 feature_rows.append(
                     {
                         "feature_name": f.get("feature_name", ""),
-                        "description": trimmed_desc,
+                        "description": (
+                            f.get("description", "")[:250]
+                            + ("..." if len(f.get("description", "")) > 250 else "")
+                        ),
                         "phase": f.get("timeline", {}).get("phase", ""),
                         "duration_hours": duration_hours,
                         "fullstack_hours": fullstack_h if fullstack_h is not None else "N/A",
@@ -862,6 +707,7 @@ if generate:
                 )
 
             df_features = pd.DataFrame(feature_rows)
+            # Only show columns relevant now (no pm/qa columns)
             if not df_features.empty:
                 df_features = df_features[
                     [
@@ -928,7 +774,7 @@ if generate:
             qa_total_hours = budget_obj.get("qa_total_hours", None)
             pm_qa_excluded = budget_obj.get("pm_qa_costs_excluded", True)
 
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
             with c1:
                 st.metric("Currency", currency)
             with c2:
@@ -944,7 +790,8 @@ if generate:
             with c4:
                 st.metric("PM/QA Costed?", "No" if pm_qa_excluded else "Yes")
 
-            c5, c6 = st.columns(2)
+            # Show PM and QA cumulative hours (these are not costed in totals)
+            c5, c6 = st.columns([2, 2])
             with c5:
                 st.metric("PM Total Hours (project)", str(pm_total_hours if pm_total_hours is not None else "N/A"))
             with c6:
@@ -969,41 +816,34 @@ if generate:
             st.info("No budget object found in parsed JSON.")
 
         # ---- LOCAL CONSISTENCY CHECKS & WARNINGS ----
+        # Compute local sums to ensure budgets match (note: PM/QA excluded)
         try:
             local_total = 0.0
             if features and isinstance(features, list):
                 for f in features:
+                    # compute per-feature cost from parsed role hours
                     resources_list = f.get("resources", [])
                     res_map = {r.get("role", "").lower(): r.get("hours", 0) for r in resources_list}
-
                     def to_float(v):
                         try:
                             return float(v)
                         except:
                             return 0.0
-
                     fs = to_float(res_map.get("fullstack", 0))
                     ai_h = to_float(res_map.get("ai", 0))
                     ui = to_float(res_map.get("ui_ux", 0))
                     local_total += round(fs * RATES["fullstack"] + ai_h * RATES["ai"] + ui * RATES["ui_ux"], 2)
 
             local_total = round(local_total, 2)
-            if budget_obj and isinstance(budget_obj, dict):
-                total_estimated = budget_obj.get("total_estimated_cost_usd", None)
-            else:
-                total_estimated = None
-
             if total_estimated is not None:
+                # total_estimated might be string; try parse
                 try:
                     total_est_val = float(total_estimated)
                 except:
                     total_est_val = None
 
                 if total_est_val is not None and abs(local_total - total_est_val) > 1.0:
-                    st.warning(
-                        f"⚠️ Estimated total from model ({total_estimated}) differs from locally computed total ({local_total}). "
-                        "We display the model total but local recomputation is shown here for comparison."
-                    )
+                    st.warning(f"⚠️ Estimated total from model ({total_estimated}) differs from locally computed total ({local_total}). We display the model total but local recomputation is shown here for comparison.")
                     st.info(f"Local recomputed total (excl. PM/QA): {local_total} USD")
         except Exception as e:
             st.info("Could not run local consistency checks: " + str(e))
@@ -1012,6 +852,6 @@ if generate:
         st.warning(
             f"⚠️ Could not parse JSON properly — showing raw output below.\n\nParsing error: {e}"
         )
-        st.code(response, language="json")
+        st.code(response, language="text")
 
     st.markdown("</div>", unsafe_allow_html=True)
